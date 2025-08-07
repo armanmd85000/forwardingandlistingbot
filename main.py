@@ -1,5 +1,5 @@
-# Ultimate Forward & Batch Bot
-# Merged features from VJ-Forward-Bot and Gita1
+# Ultimate Forward & Batch Bot - Enhanced Version
+# Merged features from VJ-Forward-Bot and Gita1 with Inline Interface
 # Don't Remove Credit Tg - @VJ_Botz
 # Subscribe YouTube Channel For Amazing Bot https://youtube.com/@Tech_VJ
 
@@ -9,7 +9,7 @@ import time
 import logging
 from typing import Optional, Tuple, Dict, Union, List, AsyncGenerator
 from pyrogram import Client, filters, idle
-from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from pyrogram.enums import ParseMode, MessageMediaType, ChatType, ChatMemberStatus
 from pyrogram.errors import (
     FloodWait, RPCError, MessageIdInvalid, ChannelInvalid,
@@ -18,7 +18,7 @@ from pyrogram.errors import (
 from logging.handlers import RotatingFileHandler
 
 # Import configuration
-from config import Config
+from config import Config, temp
 
 # Enhanced Configuration Class
 class BotConfig:
@@ -26,13 +26,14 @@ class BotConfig:
     BOT_TOKEN = Config.BOT_TOKEN
     API_ID = Config.API_ID
     API_HASH = Config.API_HASH
+    BOT_OWNER = Config.BOT_OWNER
     
     # Advanced Batch Processing settings
     OFFSET = 0
     PROCESSING = False
     BATCH_MODE = False
     PHOTO_FORWARD_MODE = False
-    AUTO_FORWARD_MODE = False  # New: Automatic forwarding
+    AUTO_FORWARD_MODE = False
     SOURCE_CHAT = None
     TARGET_CHAT = None
     START_ID = None
@@ -42,7 +43,7 @@ class BotConfig:
     ADMIN_CACHE = {}
     
     # Forward settings from VJ Bot
-    FORWARD_RULES = {}  # Chat ID -> Target Chat ID mapping
+    FORWARD_RULES = {}
     
     MESSAGE_FILTERS = {
         'text': True,
@@ -59,10 +60,15 @@ class BotConfig:
     }
     
     # Performance settings
-    MAX_RETRIES = 3
-    DELAY_BETWEEN_MESSAGES = 0.3
-    MAX_MESSAGES_PER_BATCH = 100000
-    SLEEP_THRESHOLD = 120
+    MAX_RETRIES = Config.MAX_RETRIES
+    DELAY_BETWEEN_MESSAGES = Config.DELAY_BETWEEN_MESSAGES
+    MAX_MESSAGES_PER_BATCH = Config.MAX_BATCH_SIZE
+    SLEEP_THRESHOLD = Config.SLEEP_THRESHOLD
+    
+    # UI Settings
+    CAPTION_MODE = True
+    BUTTON_MODE = False
+    SKIP_DUPLICATE = True
 
 # Initialize the bot
 app = Client(
@@ -70,8 +76,7 @@ app = Client(
     bot_token=BotConfig.BOT_TOKEN,
     api_id=BotConfig.API_ID,
     api_hash=BotConfig.API_HASH,
-    sleep_threshold=BotConfig.SLEEP_THRESHOLD,
-    plugins=dict(root="plugins")
+    sleep_threshold=BotConfig.SLEEP_THRESHOLD
 )
 
 # Logging setup
@@ -85,9 +90,91 @@ logging.basicConfig(
     level=logging.INFO
 )
 
+# ====================== INLINE KEYBOARD FUNCTIONS ======================
+def get_main_keyboard():
+    """Main settings keyboard"""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🤖 Bot Settings", callback_data="bot_settings"),
+            InlineKeyboardButton("📢 Channel Settings", callback_data="channel_settings")
+        ],
+        [
+            InlineKeyboardButton("📝 Caption Settings", callback_data="caption_settings"),
+            InlineKeyboardButton("🔘 Button Settings", callback_data="button_settings")
+        ],
+        [
+            InlineKeyboardButton("🔍 Filters", callback_data="filters"),
+            InlineKeyboardButton("⚙️ Extra Settings", callback_data="extra_settings")
+        ],
+        [
+            InlineKeyboardButton("📊 Status", callback_data="status"),
+            InlineKeyboardButton("❌ Close", callback_data="close")
+        ]
+    ])
+
+def get_bot_settings_keyboard():
+    """Bot settings keyboard"""
+    auto_status = "✅ ON" if BotConfig.AUTO_FORWARD_MODE else "❌ OFF"
+    batch_status = "✅ Ready" if not BotConfig.PROCESSING else "⚠️ Processing"
+    
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"🔄 Auto Forward: {auto_status}", callback_data="toggle_auto")],
+        [InlineKeyboardButton(f"⚡ Batch Mode: {batch_status}", callback_data="batch_mode")],
+        [InlineKeyboardButton("📸 Photo Forward", callback_data="photo_forward")],
+        [InlineKeyboardButton("🔗 Set Source Chat", callback_data="set_source")],
+        [InlineKeyboardButton("🎯 Set Target Chat", callback_data="set_target")],
+        [InlineKeyboardButton("⬅️ Back", callback_data="main_menu")]
+    ])
+
+def get_caption_settings_keyboard():
+    """Caption settings keyboard"""
+    caption_status = "✅ ON" if BotConfig.CAPTION_MODE else "❌ OFF"
+    
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"📝 Caption Mode: {caption_status}", callback_data="toggle_caption")],
+        [InlineKeyboardButton(f"🔢 Current Offset: {BotConfig.OFFSET}", callback_data="set_offset")],
+        [InlineKeyboardButton("➕ Add Number", callback_data="add_number")],
+        [InlineKeyboardButton("➖ Less Number", callback_data="less_number")],
+        [InlineKeyboardButton("📝 Word Replacements", callback_data="word_replacements")],
+        [InlineKeyboardButton("⬅️ Back", callback_data="main_menu")]
+    ])
+
+def get_filters_keyboard():
+    """Filters settings keyboard"""
+    keyboard = []
+    
+    # Create rows of filter buttons (2 per row)
+    filter_items = list(BotConfig.MESSAGE_FILTERS.items())
+    for i in range(0, len(filter_items), 2):
+        row = []
+        for j in range(2):
+            if i + j < len(filter_items):
+                filter_type, enabled = filter_items[i + j]
+                status = "✅" if enabled else "❌"
+                row.append(InlineKeyboardButton(
+                    f"{status} {filter_type.title()}", 
+                    callback_data=f"toggle_filter_{filter_type}"
+                ))
+        keyboard.append(row)
+    
+    keyboard.append([InlineKeyboardButton("⬅️ Back", callback_data="main_menu")])
+    return InlineKeyboardMarkup(keyboard)
+
+def get_extra_settings_keyboard():
+    """Extra settings keyboard"""
+    skip_status = "✅ ON" if BotConfig.SKIP_DUPLICATE else "❌ OFF"
+    
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"⏭️ Skip Duplicate: {skip_status}", callback_data="toggle_skip")],
+        [InlineKeyboardButton(f"⏱️ Delay: {BotConfig.DELAY_BETWEEN_MESSAGES}s", callback_data="set_delay")],
+        [InlineKeyboardButton(f"🔄 Max Retries: {BotConfig.MAX_RETRIES}", callback_data="set_retries")],
+        [InlineKeyboardButton("🔄 Reset All Settings", callback_data="reset_all")],
+        [InlineKeyboardButton("⬅️ Back", callback_data="main_menu")]
+    ])
+
 # ====================== UTILITY FUNCTIONS ======================
 def is_not_command(_, __, message: Message) -> bool:
-    return not message.text.startswith('/')
+    return not (message.text and message.text.startswith('/'))
 
 def parse_message_link(text: str) -> Optional[Tuple[Union[int, str], int]]:
     """Parse Telegram message link and return (chat_id, message_id) tuple"""
@@ -127,24 +214,6 @@ def modify_content(text: str, offset: int) -> str:
     pattern = r'(https?://)?(t\.me|telegram\.(?:me|dog))/(c/)?([^/\s]+)/(\d+)'
     return re.sub(pattern, replacer, text)
 
-async def iter_messages(
-    client: Client,
-    chat_id: Union[int, str],
-    limit: int,
-    offset: int = 0,
-) -> Optional[AsyncGenerator["Message", None]]:
-    """Enhanced message iteration from VJ Bot"""
-    current = offset
-    while True:
-        new_diff = min(200, limit - current)
-        if new_diff <= 0:
-            return
-        messages = await client.get_messages(chat_id, list(range(current, current+new_diff+1)))
-        for message in messages:
-            if message:
-                yield message
-                current += 1
-
 async def verify_permissions(client: Client, chat_id: Union[int, str]) -> Tuple[bool, str]:
     try:
         if isinstance(chat_id, str):
@@ -173,18 +242,6 @@ async def verify_permissions(client: Client, chat_id: Union[int, str]) -> Tuple[
             BotConfig.ADMIN_CACHE[chat_id] = result
             return result
         
-        required_perms = ["can_post_messages", "can_delete_messages"] if chat.type == ChatType.CHANNEL else ["can_send_messages"]
-        
-        if member.privileges:
-            missing_perms = [
-                perm for perm in required_perms 
-                if not getattr(member.privileges, perm, False)
-            ]
-            if missing_perms:
-                result = (False, f"Missing permissions: {', '.join(missing_perms)}")
-                BotConfig.ADMIN_CACHE[chat_id] = result
-                return result
-        
         result = (True, "OK")
         BotConfig.ADMIN_CACHE[chat_id] = result
         return result
@@ -202,7 +259,7 @@ async def process_message(client: Client, source_msg: Message, target_chat_id: i
                 
             media_type = source_msg.media
             if media_type and BotConfig.MESSAGE_FILTERS.get(media_type.value, False):
-                caption = source_msg.caption or ""
+                caption = source_msg.caption or "" if BotConfig.CAPTION_MODE else ""
                 modified_caption = modify_content(caption, BotConfig.OFFSET)
                 
                 media_mapping = {
@@ -240,7 +297,7 @@ async def process_message(client: Client, source_msg: Message, target_chat_id: i
                     chat_id=target_chat_id,
                     text=modify_content(source_msg.text, BotConfig.OFFSET),
                     parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=source_msg.reply_markup
+                    reply_markup=source_msg.reply_markup if BotConfig.BUTTON_MODE else None
                 )
                 return True
                 
@@ -251,7 +308,7 @@ async def process_message(client: Client, source_msg: Message, target_chat_id: i
                 raise
             await asyncio.sleep(e.value)
         except Exception as e:
-            print(f"Attempt {attempt + 1} failed for message {source_msg.id}: {e}")
+            logging.error(f"Attempt {attempt + 1} failed for message {source_msg.id}: {e}")
             if attempt == BotConfig.MAX_RETRIES - 1:
                 return False
             await asyncio.sleep(1)
@@ -265,7 +322,7 @@ async def process_photo_with_link(client: Client, source_msg: Message, target_ch
             if source_msg.service or source_msg.empty or not source_msg.photo:
                 return False
             
-            caption = source_msg.caption or ""
+            caption = source_msg.caption or "" if BotConfig.CAPTION_MODE else ""
             modified_caption = modify_content(caption, BotConfig.OFFSET)
             message_link = generate_message_link(source_msg.chat, source_msg.id)
             
@@ -288,7 +345,7 @@ async def process_photo_with_link(client: Client, source_msg: Message, target_ch
                 raise
             await asyncio.sleep(e.value)
         except Exception as e:
-            print(f"Attempt {attempt + 1} failed for photo message {source_msg.id}: {e}")
+            logging.error(f"Attempt {attempt + 1} failed for photo message {source_msg.id}: {e}")
             if attempt == BotConfig.MAX_RETRIES - 1:
                 return False
             await asyncio.sleep(1)
@@ -301,51 +358,211 @@ async def start_cmd(client: Client, message: Message):
     help_text = """
 🚀 **Ultimate Forward & Batch Bot** 📝
 
-🔹 **Core Features:**
+🔹 **Enhanced Features:**
 ✅ Advanced batch processing (up to 100K messages)
 ✅ Smart link modification with offset
 ✅ Word replacement system
 ✅ Photo forwarding with embedded links
 ✅ Auto-forwarding rules
+✅ Interactive settings panel
 ✅ Multiple media type support
 ✅ Flood protection & retry mechanism
 
-🔹 **Basic Commands:**
-/setchat source [chat] - Set source chat
-/setchat target [chat] - Set target chat
+🔹 **Quick Commands:**
+/settings - Open settings panel
 /batch - Start batch processing
 /photoforward - Photo forwarding mode
-/autoforward - Setup auto-forwarding
-
-🔹 **Link & Text Modification:**
-/addnumber N - Add offset N to links
-/lessnumber N - Subtract offset N
-/setoffset N - Set absolute offset
-/addreplace ORIG REPL - Add word replacement
-/replacewords - View all replacements
-
-🔹 **Filters & Settings:**
-/filtertypes - Show message filters
-/enablefilter TYPE - Enable message type
-/disablefilter TYPE - Disable message type
 /status - Show current configuration
 
-🔹 **Control Commands:**
-/stop - Cancel current operation
-/reset - Reset all settings
-
 📊 **Batch Limit:** Up to 100,000 messages per batch
-⚡ **Speed:** Optimized with flood protection
-"""
-    await message.reply(help_text, parse_mode=ParseMode.MARKDOWN)
+⚡ **Interface:** Modern button-based UI
+🔗 **Credits:** @VJ_Botz | Subscribe: @Tech_VJ
 
+Click /settings to access the interactive control panel! 👆
+"""
+    await message.reply(
+        help_text, 
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("⚙️ Open Settings", callback_data="main_menu")]
+        ])
+    )
+
+@app.on_message(filters.command("settings"))
+async def settings_cmd(client: Client, message: Message):
+    status_text = f"""
+⚙️ **Bot Settings Panel**
+
+🔹 **Current Configuration:**
+▫️ **Auto-Forward:** {'✅ Enabled' if BotConfig.AUTO_FORWARD_MODE else '❌ Disabled'}
+▫️ **Caption Mode:** {'✅ Enabled' if BotConfig.CAPTION_MODE else '❌ Disabled'}
+▫️ **Current Offset:** {BotConfig.OFFSET}
+▫️ **Processing:** {'⚠️ Active' if BotConfig.PROCESSING else '✅ Ready'}
+
+🔹 **Chat Configuration:**
+▫️ **Source:** {BotConfig.SOURCE_CHAT.title if BotConfig.SOURCE_CHAT else 'Not Set'}
+▫️ **Target:** {BotConfig.TARGET_CHAT.title if BotConfig.TARGET_CHAT else 'Not Set'}
+
+Choose an option below to configure:
+"""
+    await message.reply(
+        status_text, 
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=get_main_keyboard()
+    )
+
+# ====================== CALLBACK QUERY HANDLERS ======================
+@app.on_callback_query()
+async def callback_handler(client: Client, callback_query: CallbackQuery):
+    data = callback_query.data
+    user_id = callback_query.from_user.id
+    
+    try:
+        if data == "main_menu":
+            status_text = f"""
+⚙️ **Bot Settings Panel**
+
+🔹 **Current Configuration:**
+▫️ **Auto-Forward:** {'✅ Enabled' if BotConfig.AUTO_FORWARD_MODE else '❌ Disabled'}
+▫️ **Caption Mode:** {'✅ Enabled' if BotConfig.CAPTION_MODE else '❌ Disabled'}
+▫️ **Current Offset:** {BotConfig.OFFSET}
+▫️ **Processing:** {'⚠️ Active' if BotConfig.PROCESSING else '✅ Ready'}
+
+🔹 **Chat Configuration:**
+▫️ **Source:** {BotConfig.SOURCE_CHAT.title if BotConfig.SOURCE_CHAT else 'Not Set'}
+▫️ **Target:** {BotConfig.TARGET_CHAT.title if BotConfig.TARGET_CHAT else 'Not Set'}
+
+Choose an option below to configure:
+"""
+            await callback_query.edit_message_text(
+                status_text,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=get_main_keyboard()
+            )
+
+        elif data == "bot_settings":
+            await callback_query.edit_message_text(
+                "🤖 **Bot Settings**\n\nConfigure bot behavior and forwarding rules:",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=get_bot_settings_keyboard()
+            )
+
+        elif data == "caption_settings":
+            await callback_query.edit_message_text(
+                f"📝 **Caption Settings**\n\n**Current Offset:** {BotConfig.OFFSET}\n**Replacements:** {len(BotConfig.REPLACEMENTS)} active\n\nConfigure text and link modifications:",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=get_caption_settings_keyboard()
+            )
+
+        elif data == "filters":
+            enabled_count = sum(BotConfig.MESSAGE_FILTERS.values())
+            total_count = len(BotConfig.MESSAGE_FILTERS)
+            await callback_query.edit_message_text(
+                f"🔍 **Message Filters**\n\n**Active Filters:** {enabled_count}/{total_count}\n\nToggle message types to filter:",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=get_filters_keyboard()
+            )
+
+        elif data == "extra_settings":
+            await callback_query.edit_message_text(
+                f"⚙️ **Extra Settings**\n\n**Delay:** {BotConfig.DELAY_BETWEEN_MESSAGES}s between messages\n**Max Retries:** {BotConfig.MAX_RETRIES}\n**Skip Duplicate:** {'✅ ON' if BotConfig.SKIP_DUPLICATE else '❌ OFF'}",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=get_extra_settings_keyboard()
+            )
+
+        elif data == "toggle_auto":
+            BotConfig.AUTO_FORWARD_MODE = not BotConfig.AUTO_FORWARD_MODE
+            status = "✅ Enabled" if BotConfig.AUTO_FORWARD_MODE else "❌ Disabled"
+            await callback_query.answer(f"Auto-Forward {status}")
+            await callback_query.edit_message_reply_markup(reply_markup=get_bot_settings_keyboard())
+
+        elif data == "toggle_caption":
+            BotConfig.CAPTION_MODE = not BotConfig.CAPTION_MODE
+            status = "✅ Enabled" if BotConfig.CAPTION_MODE else "❌ Disabled"
+            await callback_query.answer(f"Caption Mode {status}")
+            await callback_query.edit_message_reply_markup(reply_markup=get_caption_settings_keyboard())
+
+        elif data == "toggle_skip":
+            BotConfig.SKIP_DUPLICATE = not BotConfig.SKIP_DUPLICATE
+            status = "✅ Enabled" if BotConfig.SKIP_DUPLICATE else "❌ Disabled"
+            await callback_query.answer(f"Skip Duplicate {status}")
+            await callback_query.edit_message_reply_markup(reply_markup=get_extra_settings_keyboard())
+
+        elif data.startswith("toggle_filter_"):
+            filter_type = data.replace("toggle_filter_", "")
+            BotConfig.MESSAGE_FILTERS[filter_type] = not BotConfig.MESSAGE_FILTERS[filter_type]
+            status = "✅ Enabled" if BotConfig.MESSAGE_FILTERS[filter_type] else "❌ Disabled"
+            await callback_query.answer(f"{filter_type.title()} filter {status}")
+            await callback_query.edit_message_reply_markup(reply_markup=get_filters_keyboard())
+
+        elif data == "batch_mode":
+            if BotConfig.PROCESSING:
+                await callback_query.answer("❌ Already processing! Use /stop to cancel", show_alert=True)
+            else:
+                await callback_query.answer("✅ Batch mode ready! Use /batch to start")
+
+        elif data == "photo_forward":
+            if BotConfig.PROCESSING:
+                await callback_query.answer("❌ Already processing! Use /stop to cancel", show_alert=True)
+            else:
+                await callback_query.answer("✅ Photo forward ready! Use /photoforward to start")
+
+        elif data == "status":
+            status_text = f"""
+📊 **Detailed Status**
+
+🔹 **Bot State:**
+▫️ Processing: {'⚠️ Active' if BotConfig.PROCESSING else '✅ Ready'}
+▫️ Auto-Forward: {'✅ ON' if BotConfig.AUTO_FORWARD_MODE else '❌ OFF'}
+▫️ Batch Mode: {'✅ ON' if BotConfig.BATCH_MODE else '❌ OFF'}
+▫️ Photo Mode: {'✅ ON' if BotConfig.PHOTO_FORWARD_MODE else '❌ OFF'}
+
+🔹 **Settings:**
+▫️ Offset: {BotConfig.OFFSET}
+▫️ Max Batch: {BotConfig.MAX_MESSAGES_PER_BATCH:,}
+▫️ Delay: {BotConfig.DELAY_BETWEEN_MESSAGES}s
+▫️ Retries: {BotConfig.MAX_RETRIES}
+
+🔹 **Filters:** {sum(BotConfig.MESSAGE_FILTERS.values())}/{len(BotConfig.MESSAGE_FILTERS)} active
+🔹 **Replacements:** {len(BotConfig.REPLACEMENTS)} rules
+"""
+            await callback_query.edit_message_text(
+                status_text,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⬅️ Back", callback_data="main_menu")]
+                ])
+            )
+
+        elif data == "reset_all":
+            BotConfig.OFFSET = 0
+            BotConfig.REPLACEMENTS = {}
+            BotConfig.PROCESSING = False
+            BotConfig.BATCH_MODE = False
+            BotConfig.PHOTO_FORWARD_MODE = False
+            BotConfig.AUTO_FORWARD_MODE = False
+            BotConfig.MESSAGE_FILTERS = {k: True for k in BotConfig.MESSAGE_FILTERS}
+            await callback_query.answer("✅ All settings reset to defaults")
+            await callback_query.edit_message_reply_markup(reply_markup=get_extra_settings_keyboard())
+
+        elif data == "close":
+            await callback_query.message.delete()
+
+        else:
+            await callback_query.answer("🚧 Feature coming soon!")
+
+    except Exception as e:
+        logging.error(f"Callback error: {e}")
+        await callback_query.answer("❌ An error occurred")
+
+# ====================== ORIGINAL COMMAND HANDLERS ======================
 @app.on_message(filters.command("batch"))
 async def start_batch(client: Client, message: Message):
     if BotConfig.PROCESSING:
         return await message.reply("⚠️ Already processing! Use /stop to cancel")
     
     if not BotConfig.SOURCE_CHAT:
-        return await message.reply("❌ Source chat not set. Use /setchat source [chat_id]")
+        return await message.reply("❌ Source chat not set. Use settings panel to configure")
     
     BotConfig.PROCESSING = True
     BotConfig.BATCH_MODE = True
@@ -360,7 +577,8 @@ async def start_batch(client: Client, message: Message):
         f"▫️ Offset: {BotConfig.OFFSET}\n"
         f"▫️ Replacements: {len(BotConfig.REPLACEMENTS)}\n"
         f"▫️ Max Batch: {BotConfig.MAX_MESSAGES_PER_BATCH:,} messages\n\n"
-        f"Reply to the FIRST message or send its link"
+        f"Reply to the FIRST message or send its link",
+        parse_mode=ParseMode.MARKDOWN
     )
 
 @app.on_message(filters.command("photoforward"))
@@ -369,10 +587,11 @@ async def start_photo_forward(client: Client, message: Message):
         return await message.reply("⚠️ Already processing! Use /stop to cancel")
     
     if not BotConfig.SOURCE_CHAT:
-        return await message.reply("❌ Source chat not set. Use /setchat source [chat_id]")
+        return await message.reply("❌ Source chat not set. Use settings panel to configure")
     
     BotConfig.PROCESSING = True
     BotConfig.PHOTO_FORWARD_MODE = True
+    BotConfig.BATCH_MODE = False
     BotConfig.START_ID = None
     BotConfig.END_ID = None
     
@@ -381,52 +600,22 @@ async def start_photo_forward(client: Client, message: Message):
         f"▫️ Source: {BotConfig.SOURCE_CHAT.title}\n"
         f"▫️ Target: {BotConfig.TARGET_CHAT.title if BotConfig.TARGET_CHAT else 'Current Chat'}\n"
         f"▫️ Filter: Photos only with embedded links\n\n"
-        f"Reply to the FIRST message or send its link"
+        f"Reply to the FIRST message or send its link",
+        parse_mode=ParseMode.MARKDOWN
     )
 
-@app.on_message(filters.command("autoforward"))
-async def setup_auto_forward(client: Client, message: Message):
-    await message.reply(
-        "🤖 **Auto-Forward Setup**\n\n"
-        "This feature allows automatic forwarding of new messages from source to target chat.\n\n"
-        "**Usage:**\n"
-        "1. Set source chat: /setchat source [chat_id]\n"
-        "2. Set target chat: /setchat target [chat_id]\n"
-        "3. Enable: /enableauto\n"
-        "4. Disable: /disableauto\n\n"
-        "**Current Status:** " + ("✅ Enabled" if BotConfig.AUTO_FORWARD_MODE else "❌ Disabled")
-    )
-
-@app.on_message(filters.command("enableauto"))
-async def enable_auto_forward(client: Client, message: Message):
-    if not BotConfig.SOURCE_CHAT or not BotConfig.TARGET_CHAT:
-        return await message.reply("❌ Both source and target chats must be set first")
-    
-    BotConfig.AUTO_FORWARD_MODE = True
-    await message.reply("✅ Auto-forwarding enabled!")
-
-@app.on_message(filters.command("disableauto"))
-async def disable_auto_forward(client: Client, message: Message):
-    BotConfig.AUTO_FORWARD_MODE = False
-    await message.reply("❌ Auto-forwarding disabled!")
-
-# Auto-forward handler
-@app.on_message(filters.all & ~filters.command(["start", "help"]))
-async def auto_forward_handler(client: Client, message: Message):
-    if (BotConfig.AUTO_FORWARD_MODE and 
-        BotConfig.SOURCE_CHAT and 
-        BotConfig.TARGET_CHAT and 
-        message.chat.id == BotConfig.SOURCE_CHAT.id and
-        not BotConfig.PROCESSING):
-        
-        try:
-            await process_message(client, message, BotConfig.TARGET_CHAT.id)
-        except Exception as e:
-            logging.error(f"Auto-forward failed: {e}")
-
-# [Rest of the command handlers from previous code...]
-# Including: addnumber, lessnumber, setoffset, replacewords, addreplace, etc.
-# [I'll include the essential ones to keep response length manageable]
+@app.on_message(filters.command(["stop", "cancel"]))
+async def stop_cmd(client: Client, message: Message):
+    if BotConfig.PROCESSING:
+        BotConfig.PROCESSING = False
+        BotConfig.BATCH_MODE = False
+        BotConfig.PHOTO_FORWARD_MODE = False
+        if BotConfig.CURRENT_TASK:
+            BotConfig.CURRENT_TASK.cancel()
+            BotConfig.CURRENT_TASK = None
+        await message.reply("✅ Processing stopped")
+    else:
+        await message.reply("⚠️ No active process")
 
 @app.on_message(filters.command(["addnumber", "addnum"]))
 async def add_offset(client: Client, message: Message):
@@ -469,59 +658,277 @@ async def set_chat(client: Client, message: Message):
         
         await message.reply(
             f"✅ {'Source' if chat_type == 'source' else 'Target'} chat set to:\n"
-            f"Title: {chat.title}\n"
-            f"ID: {chat.id}"
+            f"**Title:** {chat.title}\n"
+            f"**ID:** {chat.id}",
+            parse_mode=ParseMode.MARKDOWN
         )
     except Exception as e:
         await message.reply(f"Error: {str(e)}")
 
-@app.on_message(filters.command("status"))
-async def show_status(client: Client, message: Message):
-    status_text = f"""
-🔹 **Bot Configuration**
-▫️ Offset: {BotConfig.OFFSET}
-▫️ Replacements: {len(BotConfig.REPLACEMENTS)}
-▫️ Processing: {'✅ Yes' if BotConfig.PROCESSING else '❌ No'}
-▫️ Auto-Forward: {'✅ Yes' if BotConfig.AUTO_FORWARD_MODE else '❌ No'}
-▫️ Max Batch: {BotConfig.MAX_MESSAGES_PER_BATCH:,}
-"""
-    if BotConfig.SOURCE_CHAT:
-        status_text += f"▫️ Source: {BotConfig.SOURCE_CHAT.title}\n"
-    if BotConfig.TARGET_CHAT:
-        status_text += f"▫️ Target: {BotConfig.TARGET_CHAT.title}"
+# ====================== BATCH PROCESSING FUNCTIONS ======================
+async def process_batch(client: Client, message: Message):
+    try:
+        if not BotConfig.SOURCE_CHAT:
+            await message.reply("❌ Source chat not set")
+            BotConfig.PROCESSING = False
+            return
+            
+        start_id = min(BotConfig.START_ID, BotConfig.END_ID)
+        end_id = max(BotConfig.START_ID, BotConfig.END_ID)
+        total = end_id - start_id + 1
+        
+        if total > BotConfig.MAX_MESSAGES_PER_BATCH:
+            await message.reply(f"❌ Batch too large ({total:,} messages). Max: {BotConfig.MAX_MESSAGES_PER_BATCH:,}")
+            BotConfig.PROCESSING = False
+            return
+            
+        target_chat = BotConfig.TARGET_CHAT.id if BotConfig.TARGET_CHAT else message.chat.id
+        
+        progress_msg = await message.reply(
+            f"⚡ **Batch Processing Started**\n"
+            f"▫️ **Range:** {start_id:,}-{end_id:,}\n"
+            f"▫️ **Total:** {total:,} messages\n"
+            f"▫️ **Offset:** {BotConfig.OFFSET}",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        
+        processed = failed = 0
+        last_update = time.time()
+        
+        for current_id in range(start_id, end_id + 1):
+            if not BotConfig.PROCESSING:
+                break
+            
+            try:
+                msg = await client.get_messages(BotConfig.SOURCE_CHAT.id, current_id)
+                if msg and not msg.empty:
+                    success = await process_message(client, msg, target_chat)
+                    if success:
+                        processed += 1
+                    else:
+                        failed += 1
+                else:
+                    failed += 1
+                
+                if time.time() - last_update >= 5 or current_id == end_id:
+                    progress = ((current_id - start_id) / total) * 100
+                    try:
+                        await progress_msg.edit(
+                            f"⚡ **Processing Batch**\n"
+                            f"▫️ **Progress:** {progress:.1f}%\n"
+                            f"▫️ **Current:** {current_id:,}\n"
+                            f"✅ **Success:** {processed:,}\n"
+                            f"❌ **Failed:** {failed:,}",
+                            parse_mode=ParseMode.MARKDOWN
+                        )
+                        last_update = time.time()
+                    except:
+                        pass
+                
+                await asyncio.sleep(BotConfig.DELAY_BETWEEN_MESSAGES)
+            except FloodWait as e:
+                await progress_msg.edit(f"⏳ Flood wait: {e.value}s...")
+                await asyncio.sleep(e.value)
+            except Exception as e:
+                logging.error(f"Error processing {current_id}: {e}")
+                failed += 1
+                await asyncio.sleep(1)
+        
+        if BotConfig.PROCESSING:
+            await progress_msg.edit(
+                f"✅ **Batch Complete!**\n"
+                f"▫️ **Total:** {total:,}\n"
+                f"✅ **Success:** {processed:,}\n"
+                f"❌ **Failed:** {failed:,}\n"
+                f"▫️ **Success Rate:** {(processed/total)*100:.1f}%",
+                parse_mode=ParseMode.MARKDOWN
+            )
     
-    await message.reply(status_text, parse_mode=ParseMode.MARKDOWN)
-
-@app.on_message(filters.command("stop"))
-async def stop_cmd(client: Client, message: Message):
-    if BotConfig.PROCESSING:
+    except Exception as e:
+        await message.reply(f"❌ Batch failed: {str(e)}")
+    finally:
         BotConfig.PROCESSING = False
         BotConfig.BATCH_MODE = False
-        BotConfig.PHOTO_FORWARD_MODE = False
-        if BotConfig.CURRENT_TASK:
-            BotConfig.CURRENT_TASK.cancel()
-            BotConfig.CURRENT_TASK = None
-        await message.reply("✅ Processing stopped")
-    else:
-        await message.reply("⚠️ No active process")
-
-# [Include batch processing functions from original code...]
-async def process_batch(client: Client, message: Message):
-    # [Implementation from original gita1 code]
-    pass
+        BotConfig.CURRENT_TASK = None
 
 async def process_photo_batch(client: Client, message: Message):
-    # [Implementation from original gita1 code]
-    pass
+    try:
+        if not BotConfig.SOURCE_CHAT:
+            await message.reply("❌ Source chat not set")
+            BotConfig.PROCESSING = False
+            return
+            
+        start_id = min(BotConfig.START_ID, BotConfig.END_ID)
+        end_id = max(BotConfig.START_ID, BotConfig.END_ID)
+        total = end_id - start_id + 1
+        
+        if total > BotConfig.MAX_MESSAGES_PER_BATCH:
+            await message.reply(f"❌ Batch too large ({total:,} messages). Max: {BotConfig.MAX_MESSAGES_PER_BATCH:,}")
+            BotConfig.PROCESSING = False
+            return
+            
+        target_chat = BotConfig.TARGET_CHAT.id if BotConfig.TARGET_CHAT else message.chat.id
+        
+        progress_msg = await message.reply(
+            f"📸 **Photo Forward Processing Started**\n"
+            f"▫️ **Range:** {start_id:,}-{end_id:,}\n"
+            f"▫️ **Total Messages:** {total:,}\n"
+            f"▫️ **Filter:** Photos only with links",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        
+        processed = photos_found = failed = 0
+        last_update = time.time()
+        
+        for current_id in range(start_id, end_id + 1):
+            if not BotConfig.PROCESSING:
+                break
+            
+            try:
+                msg = await client.get_messages(BotConfig.SOURCE_CHAT.id, current_id)
+                if msg and not msg.empty:
+                    processed += 1
+                    if msg.photo:
+                        photos_found += 1
+                        success = await process_photo_with_link(client, msg, target_chat)
+                        if not success:
+                            failed += 1
+                
+                if time.time() - last_update >= 5 or current_id == end_id:
+                    progress = ((current_id - start_id) / total) * 100
+                    try:
+                        await progress_msg.edit(
+                            f"📸 **Processing Photo Batch**\n"
+                            f"▫️ **Progress:** {progress:.1f}%\n"
+                            f"▫️ **Current:** {current_id:,}\n"
+                            f"📝 **Checked:** {processed:,}\n"
+                            f"📸 **Photos Found:** {photos_found:,}\n"
+                            f"❌ **Failed:** {failed:,}",
+                            parse_mode=ParseMode.MARKDOWN
+                        )
+                        last_update = time.time()
+                    except:
+                        pass
+                
+                await asyncio.sleep(BotConfig.DELAY_BETWEEN_MESSAGES)
+            except FloodWait as e:
+                await progress_msg.edit(f"⏳ Flood wait: {e.value}s...")
+                await asyncio.sleep(e.value)
+            except Exception as e:
+                logging.error(f"Error processing {current_id}: {e}")
+                failed += 1
+                await asyncio.sleep(1)
+        
+        if BotConfig.PROCESSING:
+            success_photos = photos_found - failed
+            await progress_msg.edit(
+                f"✅ **Photo Forward Complete!**\n"
+                f"📝 **Total Checked:** {processed:,}\n"
+                f"📸 **Photos Found:** {photos_found:,}\n"
+                f"✅ **Successfully Forwarded:** {success_photos:,}\n"
+                f"❌ **Failed:** {failed:,}\n"
+                f"📊 **Success Rate:** {(success_photos/photos_found)*100:.1f}%" if photos_found > 0 else "📊 No photos found",
+                parse_mode=ParseMode.MARKDOWN
+            )
+    
+    except Exception as e:
+        await message.reply(f"❌ Photo batch failed: {str(e)}")
+    finally:
+        BotConfig.PROCESSING = False
+        BotConfig.PHOTO_FORWARD_MODE = False
+        BotConfig.CURRENT_TASK = None
 
-# Message handler for batch processing
+# Message handler for batch processing and auto-forward
 @app.on_message(filters.text & filters.create(is_not_command))
 async def handle_message(client: Client, message: Message):
+    # Auto-forward handler
+    if (BotConfig.AUTO_FORWARD_MODE and 
+        BotConfig.SOURCE_CHAT and 
+        BotConfig.TARGET_CHAT and 
+        message.chat.id == BotConfig.SOURCE_CHAT.id and
+        not BotConfig.PROCESSING):
+        
+        try:
+            await process_message(client, message, BotConfig.TARGET_CHAT.id)
+            temp.TOTAL_FORWARDED += 1
+        except Exception as e:
+            logging.error(f"Auto-forward failed: {e}")
+            temp.TOTAL_FAILED += 1
+        return
+    
+    # Batch processing handler
     if not BotConfig.PROCESSING:
         return
     
-    # [Implementation for handling batch processing messages]
-    # [Include the logic from original gita1 code]
+    try:
+        # Get source message details
+        if message.reply_to_message:
+            source_msg = message.reply_to_message
+            chat_id = source_msg.chat.id
+            msg_id = source_msg.id
+        else:
+            link_info = parse_message_link(message.text)
+            if not link_info:
+                return await message.reply("❌ Invalid message link")
+            
+            chat_identifier, msg_id = link_info
+            
+            try:
+                chat = await client.get_chat(chat_identifier)
+                chat_id = chat.id
+            except Exception as e:
+                return await message.reply(f"❌ Could not resolve chat: {str(e)}")
+
+        if BotConfig.BATCH_MODE or BotConfig.PHOTO_FORWARD_MODE:
+            if BotConfig.START_ID is None:
+                # First message of batch
+                has_perms, perm_msg = await verify_permissions(client, chat_id)
+                if not has_perms:
+                    BotConfig.PROCESSING = False
+                    return await message.reply(f"❌ Permission error: {perm_msg}")
+                
+                if BotConfig.SOURCE_CHAT and chat_id != BotConfig.SOURCE_CHAT.id:
+                    return await message.reply("❌ First message must be from the source chat")
+                
+                BotConfig.START_ID = msg_id
+                mode_text = "Photo Forward" if BotConfig.PHOTO_FORWARD_MODE else "Batch"
+                await message.reply(
+                    f"✅ **First message set:** {msg_id}\n"
+                    f"Now reply to the LAST message or send its link\n"
+                    f"**Mode:** {mode_text}",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            elif BotConfig.END_ID is None:
+                # Second message of batch
+                if not BotConfig.SOURCE_CHAT:
+                    BotConfig.PROCESSING = False
+                    return await message.reply("❌ Source chat not set")
+                
+                if chat_id != BotConfig.SOURCE_CHAT.id:
+                    return await message.reply("❌ Last message must be from the same chat as source chat")
+                
+                BotConfig.END_ID = msg_id
+                if BotConfig.PHOTO_FORWARD_MODE:
+                    BotConfig.CURRENT_TASK = asyncio.create_task(process_photo_batch(client, message))
+                else:
+                    BotConfig.CURRENT_TASK = asyncio.create_task(process_batch(client, message))
+        else:
+            # Single message processing
+            try:
+                msg = await client.get_messages(chat_id, msg_id)
+                if msg and not msg.empty:
+                    target_chat = BotConfig.TARGET_CHAT.id if BotConfig.TARGET_CHAT else message.chat.id
+                    success = await process_message(client, msg, target_chat)
+                    if not success:
+                        await message.reply("⚠️ Failed to process this message")
+            except Exception as e:
+                await message.reply(f"❌ Error: {str(e)}")
+            
+    except Exception as e:
+        await message.reply(f"❌ Critical error: {str(e)}")
+        BotConfig.PROCESSING = False
+        BotConfig.BATCH_MODE = False
+        BotConfig.PHOTO_FORWARD_MODE = False
 
 # Main function
 async def main():
@@ -529,6 +936,7 @@ async def main():
     bot_info = await app.get_me()
     print(f"✅ Bot Started: @{bot_info.username}")
     print(f"📊 Max Batch Size: {BotConfig.MAX_MESSAGES_PER_BATCH:,}")
+    print("🚀 Ultimate Forward & Batch Bot with Enhanced UI is running!")
     await idle()
 
 if __name__ == "__main__":
